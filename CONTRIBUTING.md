@@ -13,6 +13,6 @@ Contributions are very welcome! If you’d like to help improve this project:
 * Keep the UI clean and consistent with existing Home Assistant design.
 * Include comments in your code where needed.
 * Update the `CHANGELOG.md` and `README.md` with any relevant changes.
-* Keep in mind! If Homa Assistant is capable of doing it (firmware updates, automations etc it doesn't belong here).
+* Keep in mind! If Home Assistant is capable of doing it (firmware updates, automations etc it doesn't belong here).
 
 If you plan to work on one of the roadmap items, feel free to open an issue first to discuss the approach.
