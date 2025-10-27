@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2025-10-27
+
+### Added
+
+* **More Info popups** when clicking a device name (opens HA’s native dialog)
+* **Filtering** now includes only real Shelly devices (manufacturer or integration)
+* **New columns** for key device states:
+
+  * Auth (authentication active)
+  * Cloud (connected to Shelly Cloud)
+  * Bluetooth (on/off)
+  * Firmware (up-to-date indicator)
+* **Improved UI** with green checkmarks for enabled features and compact styling.
+
+### Changed
+
+* Updated table rendering for better performance.
+* Simplified sorting and search logic.
+
+### Fixed
+
+* Devices with non-Shelly names are no longer falsely included.
+
+---
+
 ## [0.1.2] - 2025-10-27
 
 ### Added
