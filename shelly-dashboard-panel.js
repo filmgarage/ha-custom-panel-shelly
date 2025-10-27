@@ -1,4 +1,4 @@
-// /local/shelly-dashboard-panel.js
+// /local/shelly-dashboard-panel.js v0.1.2
 // Custom panel that lists all Shelly devices with: model, IP (clickable), MAC, firmware, and cloud on/off
 // How it works:
 // - Uses Home Assistant WebSocket (hass.callWS) to read the device & entity registry
@@ -129,6 +129,7 @@ class ShellyDashboardPanel extends HTMLElement {
         }
 
         rows.push({
+          device_id: d.id,
           name: d.name || d.model || d.id,
           model: d.model || '',
           ip,
@@ -215,7 +216,7 @@ class ShellyDashboardPanel extends HTMLElement {
             <tbody>
               ${shown.map((r) => `
                 <tr>
-                  <td>${this._escape(r.name || '')}</td>
+                  <td>${r.device_id ? `<a href="/config/devices/device/${r.device_id}" target="_blank" rel="noreferrer noopener">${this._escape(r.name || '')}</a>` : this._escape(r.name || '')}</td>
                   <td>${this._escape(r.model || '')}</td>
                   <td>${r.ip ? `<a href="${this._escape(r.configuration_url)}" target="_blank" rel="noreferrer noopener">${this._escape(r.ip)}</a>` : '<span class="muted">—</span>'}</td>
                   <td>${r.mac ? this._escape(r.mac) : '<span class="muted">—</span>'}</td>
