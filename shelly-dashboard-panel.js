@@ -1,14 +1,14 @@
 // /local/shelly-dashboard-panel.js
-// version 0.2.0
+// version 0.2.1
 // Custom panel that displays all Shelly devices with: model, IP (clickable), MAC,
 // and security/maintenance indicators: Auth, Cloud, Bluetooth, Firmware up-to-date.
 // 
-// Improvements v0.2.0:
-// - Enhanced IP address detection with multiple fallbacks
-// - Primary entity selection prioritizes light and switch entities
-// - Better visual feedback for status indicators
-// - Improved error handling and logging
-// - Performance optimizations
+// Improvements v0.2.1:
+// - Fixed primary entity selection to actually prioritize light/switch/cover
+// - Fixed IP address detection for multi-channel devices (2PM, Pro4, 2.5, etc)
+// - Fixed keyboard shortcuts interference with search input
+// - Fixed status detection for Auth, Cloud, Bluetooth, and Firmware
+// - Improved visual indicators with proper checkmarks and colors
 
 class ShellyDashboardPanel extends HTMLElement {
   constructor() {
@@ -100,36 +100,45 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // Cloud status
+        // Cloud status - look for binary_sensor or switch
         let cloudState = null;
         const cloudEnt = ents.find(
-          (e) => e.domain === 'switch' && (/_cloud$/i.test(e.entity_id) || /cloud/i.test(e.original_name || e.name || ''))
+          (e) => (e.domain === 'binary_sensor' || e.domain === 'switch') && 
+                 (/_cloud$/i.test(e.entity_id) || /cloud/i.test(e.entity_id))
         );
         if (cloudEnt) {
           const st = stateFor(cloudEnt.entity_id);
-          if (st) cloudState = st.state === 'on';
+          if (st) {
+            cloudState = st.state === 'on' || st.state === 'true';
+          }
         }
 
-        // Authentication status (heuristic)
+        // Auth (heuristic) - look for binary_sensor
         let authState = null;
         const authEnt = ents.find(
           (e) =>
-            /(auth|authentication|password|login)/i.test(e.entity_id) ||
-            /(auth|authentication|password|login)/i.test(e.original_name || e.name || '')
+            e.domain === 'binary_sensor' &&
+            (/(auth|authentication|password|login)/i.test(e.entity_id) ||
+            /(auth|authentication|password|login)/i.test(e.original_name || e.name || ''))
         );
         if (authEnt) {
           const st = stateFor(authEnt.entity_id);
-          if (st) authState = st.state === 'on' || st.state === 'true';
+          if (st) {
+            authState = st.state === 'on' || st.state === 'true';
+          }
         }
 
-        // Bluetooth status
+        // Bluetooth - look for switch
         let btState = null;
         const btEnt = ents.find(
-          (e) => /bluetooth/i.test(e.entity_id) || /bluetooth/i.test(e.original_name || e.name || '')
+          (e) => (e.domain === 'switch' || e.domain === 'binary_sensor') && 
+                 (/bluetooth/i.test(e.entity_id) || /bluetooth/i.test(e.original_name || e.name || ''))
         );
         if (btEnt) {
           const st = stateFor(btEnt.entity_id);
-          if (st) btState = st.state === 'on';
+          if (st) {
+            btState = st.state === 'on';
+          }
         }
 
         // Firmware up-to-date?
@@ -141,7 +150,7 @@ class ShellyDashboardPanel extends HTMLElement {
           if (installed && latest) {
             fwUpToDate = installed === latest;
           } else if (st) {
-            fwUpToDate = st.state === 'off'; // 'off' = geen update beschikbaar
+            fwUpToDate = st.state === 'off'; // 'off' = no update available
           }
         }
 
@@ -172,25 +181,30 @@ class ShellyDashboardPanel extends HTMLElement {
     }
   }
 
-  // Select the best primary entity (priority: light > switch > others)
+  // Select the best primary entity (priority: light > switch > cover > others)
   _selectPrimaryEntity(entities, stateFor) {
-    // First: look for light entities with state
-    const lights = entities.filter((e) => e.domain === 'light' && stateFor(e.entity_id));
-    if (lights.length > 0) return lights[0];
+    // Priority list of domains to look for
+    const priorityDomains = ['light', 'switch', 'cover', 'sensor', 'binary_sensor'];
+    
+    for (const domain of priorityDomains) {
+      // First try to find entities of this domain that have a state
+      const withState = entities.filter((e) => e.domain === domain && stateFor(e.entity_id));
+      if (withState.length > 0) {
+        // If we have multiple, prefer ones without _channel or numeric suffixes
+        const primary = withState.find((e) => !/_\d+$/.test(e.entity_id) && !/channel_\d+/.test(e.entity_id));
+        return primary || withState[0];
+      }
+      
+      // If no state found, just return first entity of this domain
+      const anyOfDomain = entities.find((e) => e.domain === domain);
+      if (anyOfDomain) return anyOfDomain;
+    }
 
-    // Second: look for switch entities with state
-    const switches = entities.filter((e) => e.domain === 'switch' && stateFor(e.entity_id));
-    if (switches.length > 0) return switches[0];
-
-    // Third: look for cover entities with state
-    const covers = entities.filter((e) => e.domain === 'cover' && stateFor(e.entity_id));
-    if (covers.length > 0) return covers[0];
-
-    // Fourth: any entity with state
+    // Fallback: any entity with state
     const withState = entities.find((e) => stateFor(e.entity_id));
     if (withState) return withState;
 
-    // Last: just the first entity
+    // Last resort: first entity
     return entities[0];
   }
 
@@ -215,14 +229,14 @@ class ShellyDashboardPanel extends HTMLElement {
 
     // Method 2: Look for wifi_ip or ip_address entity
     const ipPatterns = [
-      /wifi_?ip/i,
-      /ip_?address/i,
+      /wifi_?ip$/i,
+      /ip_?address$/i,
       /_ip$/i,
       /^ip$/i
     ];
 
     for (const pattern of ipPatterns) {
-      const ipEnt = entities.find((e) => pattern.test(e.entity_id));
+      const ipEnt = entities.find((e) => pattern.test(e.entity_id) && e.domain === 'sensor');
       if (ipEnt) {
         const st = stateFor(ipEnt.entity_id);
         if (st?.state && st.state !== 'unknown' && st.state !== 'unavailable') {
@@ -234,13 +248,19 @@ class ShellyDashboardPanel extends HTMLElement {
       }
     }
 
-    // Method 3: Look through all sensor entities for IP pattern
+    // Method 3: Look through ALL sensor entities for IP pattern in state
     const sensors = entities.filter((e) => e.domain === 'sensor');
     for (const sensor of sensors) {
       const st = stateFor(sensor.entity_id);
       if (st?.state && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(st.state)) {
         return st.state;
       }
+    }
+
+    // Method 4: Check device attributes for IP
+    if (device.name_by_user || device.name) {
+      const nameMatch = (device.name_by_user || device.name).match(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+      if (nameMatch) return nameMatch[0];
     }
 
     // No IP found
@@ -311,11 +331,11 @@ class ShellyDashboardPanel extends HTMLElement {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 24px;
-        height: 24px;
-        padding: 0 8px;
-        border-radius: 12px; 
-        font-size: 13px;
+        min-width: 28px;
+        height: 28px;
+        padding: 0 10px;
+        border-radius: 14px; 
+        font-size: 14px;
         font-weight: 600;
         transition: transform 0.1s;
       }
@@ -323,17 +343,17 @@ class ShellyDashboardPanel extends HTMLElement {
         transform: scale(1.05);
       }
       .ok { 
-        background: var(--success-color, #43a047); 
+        background: #4caf50; 
         color: white; 
       }
       .off { 
-        background: var(--error-color, #e53935); 
+        background: #f44336; 
         color: white; 
       }
       .unknown { 
-        background: var(--disabled-color, #bdbdbd); 
+        background: #9e9e9e; 
         color: white;
-        opacity: 0.7;
+        opacity: 0.6;
       }
       .loading { 
         opacity: 0.7; 
@@ -538,16 +558,27 @@ class ShellyDashboardPanel extends HTMLElement {
       };
       
       // Prevent Home Assistant keyboard shortcuts from interfering with search input
+      // Use capture phase to catch events before they bubble
       search.addEventListener('keydown', (e) => {
         e.stopPropagation();
-      });
+      }, true);
       
       search.addEventListener('keyup', (e) => {
         e.stopPropagation();
-      });
+      }, true);
       
       search.addEventListener('keypress', (e) => {
         e.stopPropagation();
+      }, true);
+      
+      // Also prevent default for some problematic keys
+      search.addEventListener('keydown', (e) => {
+        // Don't prevent default for navigation keys
+        const allowedKeys = ['Tab', 'Escape', 'Enter'];
+        if (!allowedKeys.includes(e.key)) {
+          // Allow normal typing
+          e.stopImmediatePropagation();
+        }
       });
     }
 
