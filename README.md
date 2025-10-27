@@ -74,7 +74,3 @@ You can easily extend the panel:
 ## 🧑‍💻 Credits
 
 Developed by [Filmgarage](https://github.com/filmgarage) and assisted by AI — inspired by the need for a clear overview of Shelly devices within Home Assistant.
-
----
-
-**License:** MIT License
