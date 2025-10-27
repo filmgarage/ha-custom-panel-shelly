@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2025-10-27
+
+### Added
+
+* **Device Temperature column** showing temperature from `sensor.*_device_temperature`
+* **RSSI column** displaying WiFi signal strength with color-coded indicators (🟢🟡🟠🔴)
+* **Uptime column** showing device uptime from `sensor.*_uptime`
+* **Firmware Update button** in FW Update column - directly starts update when available
+* **Version number** (v0.3.0) displayed in footer
+
+### Changed
+
+* **One device per row** - deduplicated by device_id and IP address (multi-channel devices no longer appear multiple times)
+* **Cloud status** now specifically uses `binary_sensor.*_cloud` entity
+* **Footer layout** now shows: device count | version | data source
+
+### Removed
+
+* Authentication (Auth) column
+* Bluetooth (BT) column
+* Search field
+
+---
+
 ## [0.2.0] - 2025-10-27
 
 ### Added
