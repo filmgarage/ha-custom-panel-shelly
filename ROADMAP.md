@@ -1,6 +1,6 @@
 ## 🧭 Roadmap / Future Plans
 
-### Planned for 0.2.x
+### Planned for 1.0.x or sooner... 😜
 
 * **Entity cleanup**: automatically hide or flag entities that do not belong to Shelly devices.
 * **Security overview**: provide a clear table of all safety-related functions per device, including:
