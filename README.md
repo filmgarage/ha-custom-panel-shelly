@@ -32,8 +32,8 @@ A custom **panel_custom** for Home Assistant that lists all **Shelly devices** i
        module_url: /local/shelly-dashboard-panel.js
    ```
 
-3. **Restart Home Assistant**
-   Restart to load the new custom panel.
+3. ⚠️ **Restart Home Assistant**
+   to load the new custom panel. ⚠️
 
 4. **Access the Dashboard**
    Open the new **Shelly** entry in your Home Assistant sidebar.
