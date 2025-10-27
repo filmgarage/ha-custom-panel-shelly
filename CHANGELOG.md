@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2025-10-27
+
+### Added
+
+* **Refresh button** to manually reload device data
+* **Enhanced IP detection** with multiple fallback methods (configuration_url, wifi_ip entities, sensor scanning)
+* **Keyboard event handling** to prevent Home Assistant shortcuts from interfering with search input
+* **Improved status tooltips** showing "Active", "Inactive", or "Unknown"
+* **Better visual feedback** with hover effects on table rows and status chips
+
+### Changed
+
+* **Smart primary entity selection** now prioritizes light > switch > cover > other entities
+* **All UI text and code comments** translated to English for broader accessibility
+* **Enhanced error messages** with visual styling and clearer descriptions
+* **Improved responsive design** for mobile devices
+* **Better status indicators** with clearer symbols (✓, ✗, —) and consistent styling
+
+### Fixed
+
+* IP address now reliably detected for all device types including multi-relay devices
+* Search field no longer triggers Home Assistant keyboard shortcuts (e.g., pressing "E")
+* More consistent primary entity selection across different Shelly device models
+* Better error handling with console logging for debugging
+
+---
+
 ## [0.1.3] - 2025-10-27
 
 ### Added
