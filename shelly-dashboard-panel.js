@@ -1,11 +1,15 @@
-// /local/shelly-dashboard-panel.js v0.1.2
-// Custom panel that lists all Shelly devices with: model, IP (clickable), MAC, firmware, and cloud on/off
+// /local/shelly-dashboard-panel.js
+// version 0.1.3
+// Custom panel that lists all Shelly devices with: model, IP (clickable), MAC,
+// and security/maintenance flags: Auth, Cloud, Bluetooth, Firmware up-to-date.
 // How it works:
 // - Uses Home Assistant WebSocket (hass.callWS) to read the device & entity registry
 // - Detects Shelly devices by manufacturer === 'Shelly' OR by any entity from 'shelly' integration
-// - IP address is parsed from device.configuration_url when available
-// - Firmware is read from a matching 'update.*' entity on the device (installed_version)
-// - Cloud is read from a switch entity ending with '_cloud' (state on/off)
+// - IP address from device.configuration_url (fallback: *_wifi_ip entity)
+// - MAC from device.connections
+// - Cloud from a switch entity related to 'cloud'
+// - Auth / Bluetooth: heuristics over entity names
+// - Firmware up-to-date from update.* entity (installed_version vs latest_version)
 // NOTE: Depending on your Shelly models/integration, some fields may be unavailable.
 
 class ShellyDashboardPanel extends HTMLElement {
@@ -17,12 +21,12 @@ class ShellyDashboardPanel extends HTMLElement {
     this._data = [];
     this._loading = false;
     this._error = null;
+    this._sort = { key: 'name', dir: 'asc' };
     this.attachShadow({ mode: 'open' });
   }
 
   set hass(hass) {
     this._hass = hass;
-    // If we haven't loaded yet, attempt to load
     if (!this._loading && (!this._data || this._data.length === 0)) {
       this._loadData();
     } else {
@@ -30,14 +34,8 @@ class ShellyDashboardPanel extends HTMLElement {
     }
   }
 
-  set panel(panel) {
-    this._panel = panel;
-  }
-
-  set narrow(narrow) {
-    this._narrow = narrow;
-    this._render();
-  }
+  set panel(panel) { this._panel = panel; }
+  set narrow(narrow) { this._narrow = narrow; this._render(); }
 
   async _loadData() {
     if (!this._hass) return;
@@ -46,73 +44,68 @@ class ShellyDashboardPanel extends HTMLElement {
     this._render();
 
     try {
-      // Fetch device and entity registries
       const [devices, entities] = await Promise.all([
         this._hass.callWS({ type: 'config/device_registry/list' }),
         this._hass.callWS({ type: 'config/entity_registry/list' }),
       ]);
 
-      // Build lookup of entities by device_id
       const entitiesByDevice = new Map();
       for (const ent of entities) {
         if (!entitiesByDevice.has(ent.device_id)) entitiesByDevice.set(ent.device_id, []);
         entitiesByDevice.get(ent.device_id).push(ent);
       }
 
-      // Helper: find HA state for an entity_id
       const stateFor = (entity_id) => this._hass?.states?.[entity_id];
 
-      // Identify Shelly devices
+      // Only real Shelly devices:
       const shellyDevices = devices.filter((d) => {
-        if (d.manufacturer && String(d.manufacturer).toLowerCase().includes('shelly')) return true;
         const ents = entitiesByDevice.get(d.id) || [];
-        // Fallback: any entity with platform 'shelly' (integration) if present on entity registry
-        return ents.some((e) => e.platform === 'shelly');
+        const isShellyIntegration = ents.some((e) => e.platform === 'shelly');
+        const isShellyManufacturer = d.manufacturer && String(d.manufacturer).toLowerCase() === 'shelly';
+        return isShellyIntegration || isShellyManufacturer;
       });
 
-      // Build rows
       const rows = [];
       for (const d of shellyDevices) {
         const ents = entitiesByDevice.get(d.id) || [];
 
-        // IP from configuration_url if present
+        // Primary entity for More Info
+        const primaryEnt = ents.find((e) => stateFor(e.entity_id)) || ents[0];
+
+        // IP
         let ip = '';
         if (d.configuration_url) {
           try {
             const url = new URL(d.configuration_url);
             ip = url.hostname;
-          } catch (e) {
-            // Sometimes configuration_url might be missing protocol
+          } catch {
             const raw = d.configuration_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
             ip = raw.split('/')[0];
           }
         } else {
-          // Try to find IP in any entity attribute commonly used by Shelly (e.g., sensor.*_wifi_ip)
           const ipEnt = ents.find((e) => /wifi_?ip|ip_address/i.test(e.entity_id));
           if (ipEnt) {
             const st = stateFor(ipEnt.entity_id);
-            if (st?.state && st.state !== 'unknown' && st.state !== 'unavailable') {
-              ip = st.state;
-            }
+            if (st?.state && st.state !== 'unknown' && st.state !== 'unavailable') ip = st.state;
           }
         }
 
-        // MAC from device.connections [['mac', 'xx:xx:..']]
+        // MAC
         let mac = '';
         if (Array.isArray(d.connections)) {
           const macConn = d.connections.find((c) => c[0] === 'mac');
           if (macConn) mac = macConn[1];
         }
 
-        // Firmware: try update.* entity on this device
+        // Firmware version (raw string, optional)
         let firmware = '';
-        const updateEnt = ents.find((e) => e.platform && e.platform.includes('shelly') && e.domain === 'update')
-          || ents.find((e) => e.domain === 'update');
+        const updateEnt =
+          ents.find((e) => e.platform && e.platform.includes('shelly') && e.domain === 'update') ||
+          ents.find((e) => e.domain === 'update');
         if (updateEnt) {
           const st = stateFor(updateEnt.entity_id);
           firmware = st?.attributes?.installed_version || st?.attributes?.current_version || '';
         } else {
-          // Some Shelly sensors expose firmware as attribute on a device info sensor
           const infoEnt = ents.find((e) => /firmware|fw/i.test(e.entity_id));
           if (infoEnt) {
             const st = stateFor(infoEnt.entity_id);
@@ -120,28 +113,63 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // Cloud switch: look for switch.* ending with _cloud or having device_class 'switch' & name containing 'cloud'
-        let cloudState = null; // null = unknown, true/false known
-        const cloudEnt = ents.find((e) => e.domain === 'switch' && (/_cloud$/i.test(e.entity_id) || /cloud/i.test(e.original_name || e.name || '')));
+        // Cloud state
+        let cloudState = null;
+        const cloudEnt = ents.find(
+          (e) => e.domain === 'switch' && (/_cloud$/i.test(e.entity_id) || /cloud/i.test(e.original_name || e.name || ''))
+        );
         if (cloudEnt) {
           const st = stateFor(cloudEnt.entity_id);
           if (st) cloudState = st.state === 'on';
         }
 
+        // Auth (heuristic)
+        let authState = null;
+        const authEnt = ents.find(
+          (e) =>
+            /(auth|authentication|password|login)/i.test(e.entity_id) ||
+            /(auth|authentication|password|login)/i.test(e.original_name || e.name || '')
+        );
+        if (authEnt) {
+          const st = stateFor(authEnt.entity_id);
+          if (st) authState = st.state === 'on' || st.state === 'true';
+        }
+
+        // Bluetooth
+        let btState = null;
+        const btEnt = ents.find(
+          (e) => /bluetooth/i.test(e.entity_id) || /bluetooth/i.test(e.original_name || e.name || '')
+        );
+        if (btEnt) {
+          const st = stateFor(btEnt.entity_id);
+          if (st) btState = st.state === 'on';
+        }
+
+        // Firmware up-to-date?
+        let fwUpToDate = null;
+        if (updateEnt) {
+          const st = stateFor(updateEnt.entity_id);
+          const installed = st?.attributes?.installed_version || st?.attributes?.current_version;
+          const latest = st?.attributes?.latest_version;
+          if (installed && latest) fwUpToDate = installed === latest;
+          else if (st) fwUpToDate = st.state === 'off'; // 'off' => no update available
+        }
+
         rows.push({
           device_id: d.id,
+          entity_id: primaryEnt ? primaryEnt.entity_id : '',
           name: d.name || d.model || d.id,
           model: d.model || '',
           ip,
           mac,
-          firmware,
+          firmware, // kept internally (not shown in table now)
+          auth: authState,
           cloud: cloudState,
+          bluetooth: btState,
+          fwUpToDate,
           configuration_url: d.configuration_url || (ip ? `http://${ip}/` : ''),
         });
       }
-
-      // Sort rows by name
-      rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
       this._data = rows;
       this._loading = false;
@@ -153,9 +181,7 @@ class ShellyDashboardPanel extends HTMLElement {
     }
   }
 
-  connectedCallback() {
-    this._render();
-  }
+  connectedCallback() { this._render(); }
 
   _render() {
     const style = `
@@ -165,6 +191,8 @@ class ShellyDashboardPanel extends HTMLElement {
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--divider-color, #e0e0e0); }
       th { font-weight: 600; }
+      th.sortable { cursor: pointer; user-select: none; }
+      th.sortable .sort-indicator { opacity: 0.6; margin-left: 6px; font-size: 12px; }
       .muted { color: var(--secondary-text-color); }
       .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
       .ok { background: var(--success-color, #43a047); color: white; }
@@ -175,21 +203,24 @@ class ShellyDashboardPanel extends HTMLElement {
       a:hover { text-decoration: underline; }
       .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       input[type="search"] { width: 280px; max-width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); }
+      .linklike { background: none; border: none; padding: 0; margin: 0; color: var(--primary-color); text-decoration: none; cursor: pointer; font: inherit; }
+      .linklike:hover { text-decoration: underline; }
     `;
 
     const loading = this._loading;
     const error = this._error;
     const rows = this._data || [];
     const filter = this._filter || '';
-    const shown = !filter ? rows : rows.filter((r) => {
+    const filtered = !filter ? rows : rows.filter((r) => {
       const hay = `${r.name} ${r.model} ${r.ip} ${r.mac} ${r.firmware}`.toLowerCase();
       return hay.includes(filter.toLowerCase());
     });
+    const shown = this._applySort(filtered.slice());
 
-    const cloudChip = (val) => {
-      if (val === true) return '<span class="chip ok">✓ Aan</span>';
-      if (val === false) return '<span class="chip off">✕ Uit</span>';
-      return '<span class="chip unknown">— Onbekend</span>';
+    const icon = (val) => {
+      if (val === true) return '<span class="chip ok">✓</span>';
+      if (val === false) return '<span class="chip off">✕</span>';
+      return '<span class="chip unknown">—</span>';
     };
 
     this.shadowRoot.innerHTML = `
@@ -205,23 +236,27 @@ class ShellyDashboardPanel extends HTMLElement {
           <table aria-label="Shelly devices table">
             <thead>
               <tr>
-                <th>Naam</th>
-                <th>Model</th>
-                <th>IP</th>
-                <th>MAC</th>
-                <th>Firmware</th>
-                <th>Cloud</th>
+                <th class="sortable" data-key="name">Naam <span class="sort-indicator">${this._sort?.key==='name' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="model">Model <span class="sort-indicator">${this._sort?.key==='model' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="ip">IP <span class="sort-indicator">${this._sort?.key==='ip' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="mac">MAC <span class="sort-indicator">${this._sort?.key==='mac' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="auth">Auth <span class="sort-indicator">${this._sort?.key==='auth' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="cloud">Cloud <span class="sort-indicator">${this._sort?.key==='cloud' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="bluetooth">Bluetooth <span class="sort-indicator">${this._sort?.key==='bluetooth' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
+                <th class="sortable" data-key="fwUpToDate">Firmware <span class="sort-indicator">${this._sort?.key==='fwUpToDate' ? (this._sort.dir==='asc'?'▲':'▼') : ''}</span></th>
               </tr>
             </thead>
             <tbody>
               ${shown.map((r) => `
                 <tr>
-                  <td>${r.device_id ? `<a href="/config/devices/device/${r.device_id}" target="_blank" rel="noreferrer noopener">${this._escape(r.name || '')}</a>` : this._escape(r.name || '')}</td>
+                  <td>${r.entity_id ? `<button class="linklike more-info" data-entity="${this._escape(r.entity_id)}">${this._escape(r.name || '')}</button>` : this._escape(r.name || '')}</td>
                   <td>${this._escape(r.model || '')}</td>
                   <td>${r.ip ? `<a href="${this._escape(r.configuration_url)}" target="_blank" rel="noreferrer noopener">${this._escape(r.ip)}</a>` : '<span class="muted">—</span>'}</td>
                   <td>${r.mac ? this._escape(r.mac) : '<span class="muted">—</span>'}</td>
-                  <td>${r.firmware ? this._escape(r.firmware) : '<span class="muted">—</span>'}</td>
-                  <td>${cloudChip(r.cloud)}</td>
+                  <td>${icon(r.auth)}</td>
+                  <td>${icon(r.cloud)}</td>
+                  <td>${icon(r.bluetooth)}</td>
+                  <td>${icon(r.fwUpToDate)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -231,23 +266,32 @@ class ShellyDashboardPanel extends HTMLElement {
       </div>
     `;
 
-    // Wire search input
+    // Wire search
     const search = this.shadowRoot.querySelector('input[type="search"]');
     if (search) {
-      search.oninput = (e) => {
-        this._filter = e.target.value || '';
-        this._render();
-      };
+      search.oninput = (e) => { this._filter = e.target.value || ''; this._render(); };
     }
 
-    // Wire sortable headers
+    // Wire sorting
     this.shadowRoot.querySelectorAll('th.sortable').forEach((th) => {
       th.onclick = () => {
         const key = th.getAttribute('data-key');
         this._toggleSort(key);
       };
     });
-    }
+
+    // Wire More Info buttons
+    this.shadowRoot.querySelectorAll('button.more-info[data-entity]').forEach((btn) => {
+      btn.onclick = () => {
+        const entityId = btn.getAttribute('data-entity');
+        if (entityId) {
+          const ev = new Event('hass-more-info', { bubbles: true, composed: true });
+          ev.detail = { entityId };
+          this.dispatchEvent(ev);
+        }
+      };
+    });
+  }
 
   _applySort(arr) {
     const { key, dir } = this._sort || { key: 'name', dir: 'asc' };
@@ -258,7 +302,7 @@ class ShellyDashboardPanel extends HTMLElement {
       if (typeof v === 'boolean') return v ? '1' : '0';
       return String(v);
     };
-    arr.sort((a,b) => {
+    arr.sort((a, b) => {
       const cmp = collator.compare(val(a), val(b));
       return dir === 'asc' ? cmp : -cmp;
     });
