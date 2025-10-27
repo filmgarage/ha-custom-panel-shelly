@@ -27,7 +27,7 @@ A custom **panel_custom** for Home Assistant that lists all **Shelly devices** i
    panel_custom:
      - name: shelly-dashboard-panel
        sidebar_title: Shelly
-       sidebar_icon: mdi:chip
+       sidebar_icon: mdi:alpha-s-circle-outline
        url_path: shelly
        module_url: /local/shelly-dashboard-panel.js
    ```
