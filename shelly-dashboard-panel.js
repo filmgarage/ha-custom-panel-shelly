@@ -1,14 +1,13 @@
 // /local/shelly-dashboard-panel.js
-// version 0.3.0
+// version 0.3.1
 // Custom panel that displays all Shelly devices (one per row) with essential information.
 // 
-// Changes in v0.3.0:
-// - One device per row (deduplicated by device_id)
-// - Removed: Auth, Bluetooth columns and search field
-// - Added: Device Temperature, RSSI (signal strength), Uptime columns
-// - Added: Firmware Update button (starts update directly)
-// - Cloud status uses binary_sensor.*_cloud
-// - Version number displayed in footer
+// Changes in v0.3.1:
+// - Primary entity selection now properly filters out CONFIG and DIAGNOSTIC entities
+// - All entities (cloud, temperature, rssi, uptime, firmware, reboot) matched per device_id
+// - Added Reboot button column (button.*_reboot)
+// - MAC address is now clickable and opens device config page
+// - Removed refresh button (users can refresh page manually)
 
 class ShellyDashboardPanel extends HTMLElement {
   constructor() {
@@ -93,7 +92,7 @@ class ShellyDashboardPanel extends HTMLElement {
           if (macConn) mac = macConn[1];
         }
 
-        // Cloud status - binary_sensor ending with _cloud
+        // Cloud status - binary_sensor ending with _cloud (from THIS device's entities)
         let cloudState = null;
         const cloudEnt = ents.find((e) => e.domain === 'binary_sensor' && /_cloud$/i.test(e.entity_id));
         if (cloudEnt) {
@@ -101,7 +100,7 @@ class ShellyDashboardPanel extends HTMLElement {
           if (st) cloudState = st.state === 'on';
         }
 
-        // Device temperature - sensor ending with _device_temperature
+        // Device temperature - sensor ending with _device_temperature (from THIS device)
         let temperature = null;
         let temperatureEntity = null;
         const tempEnt = ents.find((e) => e.domain === 'sensor' && /_device_temperature$/i.test(e.entity_id));
@@ -113,7 +112,7 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // RSSI - sensor ending with _rssi
+        // RSSI - sensor ending with _rssi (from THIS device)
         let rssi = null;
         let rssiEntity = null;
         const rssiEnt = ents.find((e) => e.domain === 'sensor' && /_rssi$/i.test(e.entity_id));
@@ -125,7 +124,7 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // Uptime - sensor ending with _uptime
+        // Uptime - sensor ending with _uptime (from THIS device)
         let uptime = null;
         let uptimeEntity = null;
         const uptimeEnt = ents.find((e) => e.domain === 'sensor' && /_uptime$/i.test(e.entity_id));
@@ -137,7 +136,7 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // Firmware update - update entity ending with _firmware_update
+        // Firmware update - update entity ending with _firmware_update (from THIS device)
         let fwUpdateEntity = null;
         let fwUpToDate = null;
         let fwUpdateAvailable = false;
@@ -149,6 +148,13 @@ class ShellyDashboardPanel extends HTMLElement {
             fwUpdateAvailable = st.state === 'on';
             fwUpToDate = st.state === 'off';
           }
+        }
+
+        // Reboot button - button ending with _reboot (from THIS device)
+        let rebootEntity = null;
+        const rebootEnt = ents.find((e) => e.domain === 'button' && /_reboot$/i.test(e.entity_id));
+        if (rebootEnt) {
+          rebootEntity = rebootEnt.entity_id;
         }
 
         rows.push({
@@ -168,6 +174,7 @@ class ShellyDashboardPanel extends HTMLElement {
           fwUpdateEntity,
           fwUpToDate,
           fwUpdateAvailable,
+          rebootEntity,
           configuration_url: d.configuration_url || (ip ? `http://${ip}/` : ''),
         });
       }
@@ -183,25 +190,39 @@ class ShellyDashboardPanel extends HTMLElement {
     }
   }
 
-  // Select the best primary entity (priority: light > switch > cover > others)
+  // Select the best PRIMARY entity (no CONFIG or DIAGNOSTIC entities)
+  // Priority: light > switch > cover > others
   _selectPrimaryEntity(entities, stateFor) {
+    // Filter out CONFIG and DIAGNOSTIC entities - we only want PRIMARY entities
+    const primaryEntities = entities.filter(e => !e.entity_category);
+    
+    if (primaryEntities.length === 0) {
+      // Fallback if no primary entities found
+      return entities[0];
+    }
+
     const priorityDomains = ['light', 'switch', 'cover', 'sensor', 'binary_sensor'];
     
     for (const domain of priorityDomains) {
-      const withState = entities.filter((e) => e.domain === domain && stateFor(e.entity_id));
+      // Look for entities of this domain with state
+      const withState = primaryEntities.filter((e) => e.domain === domain && stateFor(e.entity_id));
       if (withState.length > 0) {
+        // Prefer entities without channel suffixes
         const primary = withState.find((e) => !/_\d+$/.test(e.entity_id) && !/channel_\d+/.test(e.entity_id));
         return primary || withState[0];
       }
       
-      const anyOfDomain = entities.find((e) => e.domain === domain);
+      // If no state found, just return first entity of this domain
+      const anyOfDomain = primaryEntities.find((e) => e.domain === domain);
       if (anyOfDomain) return anyOfDomain;
     }
 
-    const withState = entities.find((e) => stateFor(e.entity_id));
+    // Fallback: any primary entity with state
+    const withState = primaryEntities.find((e) => stateFor(e.entity_id));
     if (withState) return withState;
 
-    return entities[0];
+    // Last resort: first primary entity
+    return primaryEntities[0];
   }
 
   // Enhanced IP address extraction with multiple fallback methods
@@ -275,6 +296,29 @@ class ShellyDashboardPanel extends HTMLElement {
       console.error('Error updating firmware:', err);
       alert(`Error updating firmware: ${err.message}`);
     }
+  }
+
+  async _handleReboot(entityId) {
+    if (!this._hass || !entityId) return;
+    
+    try {
+      await this._hass.callService('button', 'press', {
+        entity_id: entityId
+      });
+      
+      alert('Reboot command sent to device');
+    } catch (err) {
+      console.error('Error rebooting device:', err);
+      alert(`Error rebooting device: ${err.message}`);
+    }
+  }
+
+  _navigateToDevice(deviceId) {
+    if (!deviceId) return;
+    
+    // Navigate to device config page
+    window.history.pushState(null, '', `/config/devices/device/${deviceId}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
   _render() {
@@ -367,11 +411,15 @@ class ShellyDashboardPanel extends HTMLElement {
       a { 
         color: var(--primary-color); 
         text-decoration: none;
-        font-family: monospace;
         font-weight: 500;
       }
       a:hover { 
         text-decoration: underline; 
+      }
+      .mac-link {
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
       }
       .toolbar { 
         display: flex; 
@@ -409,26 +457,7 @@ class ShellyDashboardPanel extends HTMLElement {
         border-top: 1px solid var(--divider-color, #e0e0e0);
         font-size: 12px;
       }
-      .refresh-button {
-        background: var(--primary-color);
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 500;
-        transition: opacity 0.2s;
-      }
-      .refresh-button:hover {
-        opacity: 0.9;
-      }
-      .refresh-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .update-button {
-        background: #ff9800;
+      .action-button {
         color: white;
         border: none;
         padding: 4px 12px;
@@ -439,12 +468,18 @@ class ShellyDashboardPanel extends HTMLElement {
         transition: opacity 0.2s;
         text-transform: uppercase;
       }
-      .update-button:hover {
+      .action-button:hover {
         opacity: 0.9;
       }
-      .update-button:disabled {
+      .action-button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+      }
+      .update-button {
+        background: #ff9800;
+      }
+      .reboot-button {
+        background: #f44336;
       }
       @media (max-width: 768px) {
         :host {
@@ -501,12 +536,7 @@ class ShellyDashboardPanel extends HTMLElement {
       <style>${style}</style>
       <div class="card ${loading ? 'loading' : ''}">
         <div class="toolbar">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <h1>Shelly Devices</h1>
-            <button class="refresh-button" id="refresh-btn" ${loading ? 'disabled' : ''}>
-              ${loading ? '⟳ Loading...' : '⟳ Refresh'}
-            </button>
-          </div>
+          <h1>Shelly Devices</h1>
         </div>
         
         ${error ? `<p style="color: var(--error-color); padding: 12px; background: rgba(244,67,54,0.1); border-radius: 8px; margin-bottom: 16px;">⚠️ Error: ${this._escape(error)}</p>` : ''}
@@ -529,6 +559,7 @@ class ShellyDashboardPanel extends HTMLElement {
                 <th class="sortable numeric-cell" data-key="rssi" title="WiFi signal strength">RSSI <span class="sort-indicator">${this._getSortIndicator('rssi')}</span></th>
                 <th class="sortable" data-key="uptime" title="Device uptime">Uptime <span class="sort-indicator">${this._getSortIndicator('uptime')}</span></th>
                 <th class="sortable status-cell" data-key="fwUpToDate" title="Firmware update">FW Update <span class="sort-indicator">${this._getSortIndicator('fwUpToDate')}</span></th>
+                <th class="status-cell" title="Reboot device">Reboot</th>
               </tr>
             </thead>
             <tbody>
@@ -545,17 +576,26 @@ class ShellyDashboardPanel extends HTMLElement {
                       ? `<a href="${this._escape(r.configuration_url)}" target="_blank" rel="noreferrer noopener" title="Open web interface">${this._escape(r.ip)}</a>` 
                       : '<span class="muted">—</span>'}
                   </td>
-                  <td>${r.mac ? `<span style="font-family: monospace; font-size: 12px;">${this._escape(r.mac)}</span>` : '<span class="muted">—</span>'}</td>
+                  <td>
+                    ${r.mac 
+                      ? `<a class="mac-link" data-device="${this._escape(r.device_id)}" title="Open device config page">${this._escape(r.mac)}</a>` 
+                      : '<span class="muted">—</span>'}
+                  </td>
                   <td class="status-cell">${icon(r.cloud)}</td>
                   <td class="numeric-cell">${formatTemp(r.temperature)}</td>
                   <td class="numeric-cell">${formatRSSI(r.rssi)}</td>
                   <td>${formatUptime(r.uptime)}</td>
                   <td class="status-cell">
                     ${r.fwUpdateAvailable 
-                      ? `<button class="update-button" data-entity="${this._escape(r.fwUpdateEntity)}" title="Click to update firmware">Update</button>`
+                      ? `<button class="action-button update-button" data-entity="${this._escape(r.fwUpdateEntity)}" title="Click to update firmware">Update</button>`
                       : r.fwUpToDate === true
                         ? '<span class="chip ok" title="Up to date">✓</span>'
                         : '<span class="chip unknown" title="Unknown">—</span>'}
+                  </td>
+                  <td class="status-cell">
+                    ${r.rebootEntity 
+                      ? `<button class="action-button reboot-button" data-entity="${this._escape(r.rebootEntity)}" title="Click to reboot device">Reboot</button>`
+                      : '<span class="muted">—</span>'}
                   </td>
                 </tr>
               `).join('')}
@@ -567,7 +607,7 @@ class ShellyDashboardPanel extends HTMLElement {
         <div class="footer muted">
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <span>${shown.length} ${shown.length === 1 ? 'device' : 'devices'}</span>
-            <span style="font-weight: 600; color: var(--primary-text-color);">v0.3.0</span>
+            <span style="font-weight: 600; color: var(--primary-text-color);">v0.3.1</span>
             <span>Source: Home Assistant Device & Entity Registry</span>
           </div>
         </div>
@@ -579,15 +619,6 @@ class ShellyDashboardPanel extends HTMLElement {
   }
 
   _attachEventListeners() {
-    // Refresh button
-    const refreshBtn = this.shadowRoot.getElementById('refresh-btn');
-    if (refreshBtn) {
-      refreshBtn.onclick = () => {
-        this._data = [];
-        this._loadData();
-      };
-    }
-
     // Sort functionality
     this.shadowRoot.querySelectorAll('th.sortable').forEach((th) => {
       th.onclick = () => {
@@ -608,12 +639,33 @@ class ShellyDashboardPanel extends HTMLElement {
       };
     });
 
+    // MAC address links to device config
+    this.shadowRoot.querySelectorAll('a.mac-link[data-device]').forEach((link) => {
+      link.onclick = (e) => {
+        e.preventDefault();
+        const deviceId = link.getAttribute('data-device');
+        if (deviceId) {
+          this._navigateToDevice(deviceId);
+        }
+      };
+    });
+
     // Firmware update buttons
     this.shadowRoot.querySelectorAll('button.update-button[data-entity]').forEach((btn) => {
       btn.onclick = () => {
         const entityId = btn.getAttribute('data-entity');
         if (entityId && confirm('Start firmware update for this device?')) {
           this._handleFirmwareUpdate(entityId);
+        }
+      };
+    });
+
+    // Reboot buttons
+    this.shadowRoot.querySelectorAll('button.reboot-button[data-entity]').forEach((btn) => {
+      btn.onclick = () => {
+        const entityId = btn.getAttribute('data-entity');
+        if (entityId && confirm('Reboot this device? It will be unavailable for a short time.')) {
+          this._handleReboot(entityId);
         }
       };
     });
