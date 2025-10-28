@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2025-10-27
+
+### Fixed
+
+* **Entity matching** - Extract domain from entity_id instead of using e.domain property (which is undefined in entity registry). This fixes all entities (cloud, temperature, RSSI, uptime, firmware update, reboot) not being detected.
+
+---
+
+## [0.3.1] - 2025-10-27
+
+### Added
+
+* **Reboot button column** - directly reboots device using `button.*_reboot` entity
+* **Clickable MAC address** - opens device configuration page in Home Assistant
+
+### Changed
+
+* **Primary entity selection** - now correctly filters out CONFIG and DIAGNOSTIC entities (only shows primary entities like lights, switches, covers)
+* **Entity matching per device** - all entities (cloud, temperature, RSSI, uptime, firmware update, reboot) are now properly matched to their specific device_id
+
+### Removed
+
+* **Refresh button** - users can refresh the page manually
+
+---
+
 ## [0.3.0] - 2025-10-27
 
 ### Added
