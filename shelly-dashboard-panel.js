@@ -1,13 +1,9 @@
 // /local/shelly-dashboard-panel.js
-// version 0.3.1
+// version 0.3.2
 // Custom panel that displays all Shelly devices (one per row) with essential information.
 // 
-// Changes in v0.3.1:
-// - Primary entity selection now properly filters out CONFIG and DIAGNOSTIC entities
-// - All entities (cloud, temperature, rssi, uptime, firmware, reboot) matched per device_id
-// - Added Reboot button column (button.*_reboot)
-// - MAC address is now clickable and opens device config page
-// - Removed refresh button (users can refresh page manually)
+// Fix in v0.3.2:
+// - Extract domain from entity_id instead of using e.domain property (which is undefined in entity registry)
 
 class ShellyDashboardPanel extends HTMLElement {
   constructor() {
@@ -33,6 +29,11 @@ class ShellyDashboardPanel extends HTMLElement {
 
   set panel(panel) { this._panel = panel; }
   set narrow(narrow) { this._narrow = narrow; this._render(); }
+
+  // Helper to get domain from entity_id
+  _getDomain(entity_id) {
+    return entity_id ? entity_id.split('.')[0] : '';
+  }
 
   async _loadData() {
     if (!this._hass) return;
@@ -70,18 +71,15 @@ class ShellyDashboardPanel extends HTMLElement {
       const rows = [];
       
       for (const d of shellyDevices) {
-        // Skip if we've already processed this device
         if (seenDevices.has(d.id)) continue;
         
         const ents = entitiesByDevice.get(d.id) || [];
         const primaryEnt = this._selectPrimaryEntity(ents, stateFor);
         const ip = this._extractIP(d, ents, stateFor);
 
-        // Skip duplicates by IP address as well
         const ipKey = ip ? `ip_${ip}` : null;
         if (ipKey && seenDevices.has(ipKey)) continue;
         
-        // Mark this device and IP as processed
         seenDevices.add(d.id);
         if (ipKey) seenDevices.add(ipKey);
 
@@ -92,55 +90,49 @@ class ShellyDashboardPanel extends HTMLElement {
           if (macConn) mac = macConn[1];
         }
 
-        // Cloud status - binary_sensor ending with _cloud (from THIS device's entities)
+        // Cloud status - binary_sensor ending with _cloud
         let cloudState = null;
-        const cloudEnt = ents.find((e) => e.domain === 'binary_sensor' && /_cloud$/i.test(e.entity_id));
+        const cloudEnt = ents.find((e) => this._getDomain(e.entity_id) === 'binary_sensor' && /_cloud$/i.test(e.entity_id));
         if (cloudEnt) {
           const st = stateFor(cloudEnt.entity_id);
           if (st) cloudState = st.state === 'on';
         }
 
-        // Device temperature - sensor ending with _device_temperature (from THIS device)
+        // Device temperature - sensor ending with _device_temperature
         let temperature = null;
-        let temperatureEntity = null;
-        const tempEnt = ents.find((e) => e.domain === 'sensor' && /_device_temperature$/i.test(e.entity_id));
+        const tempEnt = ents.find((e) => this._getDomain(e.entity_id) === 'sensor' && /_device_temperature$/i.test(e.entity_id));
         if (tempEnt) {
           const st = stateFor(tempEnt.entity_id);
           if (st && st.state !== 'unknown' && st.state !== 'unavailable') {
             temperature = st.state;
-            temperatureEntity = tempEnt.entity_id;
           }
         }
 
-        // RSSI - sensor ending with _rssi (from THIS device)
+        // RSSI - sensor ending with _rssi
         let rssi = null;
-        let rssiEntity = null;
-        const rssiEnt = ents.find((e) => e.domain === 'sensor' && /_rssi$/i.test(e.entity_id));
+        const rssiEnt = ents.find((e) => this._getDomain(e.entity_id) === 'sensor' && /_rssi$/i.test(e.entity_id));
         if (rssiEnt) {
           const st = stateFor(rssiEnt.entity_id);
           if (st && st.state !== 'unknown' && st.state !== 'unavailable') {
             rssi = st.state;
-            rssiEntity = rssiEnt.entity_id;
           }
         }
 
-        // Uptime - sensor ending with _uptime (from THIS device)
+        // Uptime - sensor ending with _uptime
         let uptime = null;
-        let uptimeEntity = null;
-        const uptimeEnt = ents.find((e) => e.domain === 'sensor' && /_uptime$/i.test(e.entity_id));
+        const uptimeEnt = ents.find((e) => this._getDomain(e.entity_id) === 'sensor' && /_uptime$/i.test(e.entity_id));
         if (uptimeEnt) {
           const st = stateFor(uptimeEnt.entity_id);
           if (st && st.state !== 'unknown' && st.state !== 'unavailable') {
             uptime = st.state;
-            uptimeEntity = uptimeEnt.entity_id;
           }
         }
 
-        // Firmware update - update entity ending with _firmware_update (from THIS device)
+        // Firmware update - update entity ending with _firmware_update
         let fwUpdateEntity = null;
         let fwUpToDate = null;
         let fwUpdateAvailable = false;
-        const updateEnt = ents.find((e) => e.domain === 'update' && /_firmware_update$/i.test(e.entity_id));
+        const updateEnt = ents.find((e) => this._getDomain(e.entity_id) === 'update' && /_firmware_update$/i.test(e.entity_id));
         if (updateEnt) {
           fwUpdateEntity = updateEnt.entity_id;
           const st = stateFor(updateEnt.entity_id);
@@ -150,9 +142,9 @@ class ShellyDashboardPanel extends HTMLElement {
           }
         }
 
-        // Reboot button - button ending with _reboot (from THIS device)
+        // Reboot button - button ending with _reboot
         let rebootEntity = null;
-        const rebootEnt = ents.find((e) => e.domain === 'button' && /_reboot$/i.test(e.entity_id));
+        const rebootEnt = ents.find((e) => this._getDomain(e.entity_id) === 'button' && /_reboot$/i.test(e.entity_id));
         if (rebootEnt) {
           rebootEntity = rebootEnt.entity_id;
         }
@@ -166,11 +158,8 @@ class ShellyDashboardPanel extends HTMLElement {
           mac,
           cloud: cloudState,
           temperature,
-          temperatureEntity,
           rssi,
-          rssiEntity,
           uptime,
-          uptimeEntity,
           fwUpdateEntity,
           fwUpToDate,
           fwUpdateAvailable,
@@ -191,41 +180,33 @@ class ShellyDashboardPanel extends HTMLElement {
   }
 
   // Select the best PRIMARY entity (no CONFIG or DIAGNOSTIC entities)
-  // Priority: light > switch > cover > others
   _selectPrimaryEntity(entities, stateFor) {
-    // Filter out CONFIG and DIAGNOSTIC entities - we only want PRIMARY entities
     const primaryEntities = entities.filter(e => !e.entity_category);
     
     if (primaryEntities.length === 0) {
-      // Fallback if no primary entities found
       return entities[0];
     }
 
     const priorityDomains = ['light', 'switch', 'cover', 'sensor', 'binary_sensor'];
     
     for (const domain of priorityDomains) {
-      // Look for entities of this domain with state
-      const withState = primaryEntities.filter((e) => e.domain === domain && stateFor(e.entity_id));
+      const withState = primaryEntities.filter((e) => this._getDomain(e.entity_id) === domain && stateFor(e.entity_id));
       if (withState.length > 0) {
-        // Prefer entities without channel suffixes
         const primary = withState.find((e) => !/_\d+$/.test(e.entity_id) && !/channel_\d+/.test(e.entity_id));
         return primary || withState[0];
       }
       
-      // If no state found, just return first entity of this domain
-      const anyOfDomain = primaryEntities.find((e) => e.domain === domain);
+      const anyOfDomain = primaryEntities.find((e) => this._getDomain(e.entity_id) === domain);
       if (anyOfDomain) return anyOfDomain;
     }
 
-    // Fallback: any primary entity with state
     const withState = primaryEntities.find((e) => stateFor(e.entity_id));
     if (withState) return withState;
 
-    // Last resort: first primary entity
     return primaryEntities[0];
   }
 
-  // Enhanced IP address extraction with multiple fallback methods
+  // Enhanced IP address extraction
   _extractIP(device, entities, stateFor) {
     // Method 1: configuration_url
     if (device.configuration_url) {
@@ -244,15 +225,10 @@ class ShellyDashboardPanel extends HTMLElement {
     }
 
     // Method 2: Look for wifi_ip or ip_address entity
-    const ipPatterns = [
-      /wifi_?ip$/i,
-      /ip_?address$/i,
-      /_ip$/i,
-      /^ip$/i
-    ];
+    const ipPatterns = [/wifi_?ip$/i, /ip_?address$/i, /_ip$/i, /^ip$/i];
 
     for (const pattern of ipPatterns) {
-      const ipEnt = entities.find((e) => pattern.test(e.entity_id) && e.domain === 'sensor');
+      const ipEnt = entities.find((e) => pattern.test(e.entity_id) && this._getDomain(e.entity_id) === 'sensor');
       if (ipEnt) {
         const st = stateFor(ipEnt.entity_id);
         if (st?.state && st.state !== 'unknown' && st.state !== 'unavailable') {
@@ -264,7 +240,7 @@ class ShellyDashboardPanel extends HTMLElement {
     }
 
     // Method 3: Look through all sensor entities for IP pattern
-    const sensors = entities.filter((e) => e.domain === 'sensor');
+    const sensors = entities.filter((e) => this._getDomain(e.entity_id) === 'sensor');
     for (const sensor of sensors) {
       const st = stateFor(sensor.entity_id);
       if (st?.state && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(st.state)) {
@@ -287,7 +263,6 @@ class ShellyDashboardPanel extends HTMLElement {
         entity_id: entityId
       });
       
-      // Reload data after a short delay to show updated status
       setTimeout(() => {
         this._data = [];
         this._loadData();
@@ -316,186 +291,49 @@ class ShellyDashboardPanel extends HTMLElement {
   _navigateToDevice(deviceId) {
     if (!deviceId) return;
     
-    // Navigate to device config page
     window.history.pushState(null, '', `/config/devices/device/${deviceId}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
   _render() {
     const style = `
-      :host { 
-        display: block; 
-        padding: 16px; 
-        box-sizing: border-box; 
-      }
-      h1 { 
-        font-size: 22px; 
-        margin: 8px 0 16px;
-        font-weight: 500;
-      }
-      .card { 
-        background: var(--card-background-color, #fff); 
-        border-radius: 12px; 
-        padding: 16px; 
-        box-shadow: var(--ha-card-box-shadow, 0 2px 4px rgba(0,0,0,0.1)); 
-      }
-      table { 
-        width: 100%; 
-        border-collapse: collapse; 
-      }
-      th, td { 
-        text-align: left; 
-        padding: 12px 10px; 
-        border-bottom: 1px solid var(--divider-color, #e0e0e0); 
-      }
-      th { 
-        font-weight: 600;
-        font-size: 13px;
-        color: var(--secondary-text-color, #666);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      th.sortable { 
-        cursor: pointer; 
-        user-select: none;
-        transition: color 0.2s;
-      }
-      th.sortable:hover {
-        color: var(--primary-color);
-      }
-      th.sortable .sort-indicator { 
-        opacity: 0.6; 
-        margin-left: 6px; 
-        font-size: 11px; 
-      }
-      tbody tr {
-        transition: background-color 0.15s;
-      }
-      tbody tr:hover {
-        background-color: var(--table-row-background-hover-color, rgba(0,0,0,0.03));
-      }
-      .muted { 
-        color: var(--secondary-text-color, #666); 
-      }
-      .chip { 
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 28px;
-        height: 28px;
-        padding: 0 10px;
-        border-radius: 14px; 
-        font-size: 14px;
-        font-weight: 600;
-        transition: transform 0.1s;
-      }
-      .chip:hover {
-        transform: scale(1.05);
-      }
-      .ok { 
-        background: #4caf50; 
-        color: white; 
-      }
-      .off { 
-        background: #f44336; 
-        color: white; 
-      }
-      .unknown { 
-        background: #9e9e9e; 
-        color: white;
-        opacity: 0.6;
-      }
-      .loading { 
-        opacity: 0.7; 
-      }
-      a { 
-        color: var(--primary-color); 
-        text-decoration: none;
-        font-weight: 500;
-      }
-      a:hover { 
-        text-decoration: underline; 
-      }
-      .mac-link {
-        font-family: monospace;
-        font-size: 12px;
-        cursor: pointer;
-      }
-      .toolbar { 
-        display: flex; 
-        align-items: center; 
-        justify-content: space-between; 
-        margin-bottom: 16px;
-        gap: 16px;
-        flex-wrap: wrap;
-      }
-      .linklike { 
-        background: none; 
-        border: none; 
-        padding: 0; 
-        margin: 0; 
-        color: var(--primary-text-color); 
-        text-decoration: none; 
-        cursor: pointer; 
-        font: inherit;
-        font-weight: 500;
-        transition: color 0.2s;
-      }
-      .linklike:hover { 
-        color: var(--primary-color);
-      }
-      .status-cell {
-        text-align: center;
-      }
-      .numeric-cell {
-        text-align: right;
-        font-family: monospace;
-      }
-      .footer {
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid var(--divider-color, #e0e0e0);
-        font-size: 12px;
-      }
-      .action-button {
-        color: white;
-        border: none;
-        padding: 4px 12px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 600;
-        transition: opacity 0.2s;
-        text-transform: uppercase;
-      }
-      .action-button:hover {
-        opacity: 0.9;
-      }
-      .action-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .update-button {
-        background: #ff9800;
-      }
-      .reboot-button {
-        background: #f44336;
-      }
+      :host { display: block; padding: 16px; box-sizing: border-box; }
+      h1 { font-size: 22px; margin: 8px 0 16px; font-weight: 500; }
+      .card { background: var(--card-background-color, #fff); border-radius: 12px; padding: 16px; box-shadow: var(--ha-card-box-shadow, 0 2px 4px rgba(0,0,0,0.1)); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--divider-color, #e0e0e0); }
+      th { font-weight: 600; font-size: 13px; color: var(--secondary-text-color, #666); text-transform: uppercase; letter-spacing: 0.5px; }
+      th.sortable { cursor: pointer; user-select: none; transition: color 0.2s; }
+      th.sortable:hover { color: var(--primary-color); }
+      th.sortable .sort-indicator { opacity: 0.6; margin-left: 6px; font-size: 11px; }
+      tbody tr { transition: background-color 0.15s; }
+      tbody tr:hover { background-color: var(--table-row-background-hover-color, rgba(0,0,0,0.03)); }
+      .muted { color: var(--secondary-text-color, #666); }
+      .chip { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 10px; border-radius: 14px; font-size: 14px; font-weight: 600; transition: transform 0.1s; }
+      .chip:hover { transform: scale(1.05); }
+      .ok { background: #4caf50; color: white; }
+      .off { background: #f44336; color: white; }
+      .unknown { background: #9e9e9e; color: white; opacity: 0.6; }
+      .loading { opacity: 0.7; }
+      a { color: var(--primary-color); text-decoration: none; font-weight: 500; }
+      a:hover { text-decoration: underline; }
+      .mac-link { font-family: monospace; font-size: 12px; cursor: pointer; }
+      .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; flex-wrap: wrap; }
+      .linklike { background: none; border: none; padding: 0; margin: 0; color: var(--primary-text-color); text-decoration: none; cursor: pointer; font: inherit; font-weight: 500; transition: color 0.2s; }
+      .linklike:hover { color: var(--primary-color); }
+      .status-cell { text-align: center; }
+      .numeric-cell { text-align: right; font-family: monospace; }
+      .footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color, #e0e0e0); font-size: 12px; }
+      .action-button { color: white; border: none; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: opacity 0.2s; text-transform: uppercase; }
+      .action-button:hover { opacity: 0.9; }
+      .action-button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .update-button { background: #ff9800; }
+      .reboot-button { background: #f44336; }
       @media (max-width: 768px) {
-        :host {
-          padding: 8px;
-        }
-        .card {
-          padding: 12px;
-        }
-        th, td {
-          padding: 8px 6px;
-          font-size: 13px;
-        }
-        .toolbar {
-          flex-direction: column;
-          align-items: stretch;
-        }
+        :host { padding: 8px; }
+        .card { padding: 12px; }
+        th, td { padding: 8px 6px; font-size: 13px; }
+        .toolbar { flex-direction: column; align-items: stretch; }
       }
     `;
 
@@ -504,7 +342,6 @@ class ShellyDashboardPanel extends HTMLElement {
     const rows = this._data || [];
     const shown = this._applySort(rows.slice());
 
-    // Enhanced status icons
     const icon = (val) => {
       if (val === true) return '<span class="chip ok" title="Active">✓</span>';
       if (val === false) return '<span class="chip off" title="Inactive">✗</span>';
@@ -520,10 +357,10 @@ class ShellyDashboardPanel extends HTMLElement {
       if (!rssi) return '<span class="muted">—</span>';
       const val = parseInt(rssi);
       let quality = '';
-      if (val >= -50) quality = '🟢'; // Excellent
-      else if (val >= -60) quality = '🟡'; // Good
-      else if (val >= -70) quality = '🟠'; // Fair
-      else quality = '🔴'; // Poor
+      if (val >= -50) quality = '🟢';
+      else if (val >= -60) quality = '🟡';
+      else if (val >= -70) quality = '🟠';
+      else quality = '🔴';
       return `${quality} ${rssi} dBm`;
     };
 
@@ -607,19 +444,17 @@ class ShellyDashboardPanel extends HTMLElement {
         <div class="footer muted">
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <span>${shown.length} ${shown.length === 1 ? 'device' : 'devices'}</span>
-            <span style="font-weight: 600; color: var(--primary-text-color);">v0.3.1</span>
+            <span style="font-weight: 600; color: var(--primary-text-color);">v0.3.2</span>
             <span>Source: Home Assistant Device & Entity Registry</span>
           </div>
         </div>
       </div>
     `;
 
-    // Event listeners
     this._attachEventListeners();
   }
 
   _attachEventListeners() {
-    // Sort functionality
     this.shadowRoot.querySelectorAll('th.sortable').forEach((th) => {
       th.onclick = () => {
         const key = th.getAttribute('data-key');
@@ -627,7 +462,6 @@ class ShellyDashboardPanel extends HTMLElement {
       };
     });
 
-    // More Info dialog
     this.shadowRoot.querySelectorAll('button.more-info[data-entity]').forEach((btn) => {
       btn.onclick = () => {
         const entityId = btn.getAttribute('data-entity');
@@ -639,7 +473,6 @@ class ShellyDashboardPanel extends HTMLElement {
       };
     });
 
-    // MAC address links to device config
     this.shadowRoot.querySelectorAll('a.mac-link[data-device]').forEach((link) => {
       link.onclick = (e) => {
         e.preventDefault();
@@ -650,7 +483,6 @@ class ShellyDashboardPanel extends HTMLElement {
       };
     });
 
-    // Firmware update buttons
     this.shadowRoot.querySelectorAll('button.update-button[data-entity]').forEach((btn) => {
       btn.onclick = () => {
         const entityId = btn.getAttribute('data-entity');
@@ -660,7 +492,6 @@ class ShellyDashboardPanel extends HTMLElement {
       };
     });
 
-    // Reboot buttons
     this.shadowRoot.querySelectorAll('button.reboot-button[data-entity]').forEach((btn) => {
       btn.onclick = () => {
         const entityId = btn.getAttribute('data-entity');
